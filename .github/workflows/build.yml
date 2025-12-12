@@ -1,0 +1,76 @@
+name: Build Xray for Android
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+      
+      - name: Install Android NDK
+        run: sdkmanager "ndk;25.2.9519653"
+
+      - name: Install Gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          gomobile init
+
+      - name: Create Go Wrapper Code
+        run: |
+          mkdir -p xray_bridge
+          cd xray_bridge
+          go mod init xray_bridge
+          go get github.com/xtls/xray-core@v1.8.4
+          # 注意：这里使用的是 v1.8.4 左右的版本，你可以根据需要修改 tag
+          
+          # 创建 lib.go
+          cat <<EOF > lib.go
+          package xray_bridge
+          import (
+            "fmt"
+            "github.com/xtls/xray-core/core"
+            _ "github.com/xtls/xray-core/main/distro/all"
+          )
+          var xrayInstance *core.Instance
+          func StartXray(configJson string) string {
+            if xrayInstance != nil { xrayInstance.Close(); xrayInstance = nil }
+            config, err := core.LoadConfig("json", []byte(configJson))
+            if err != nil { return fmt.Sprintf("Config Load Error: %s", err) }
+            instance, err := core.New(config)
+            if err != nil { return fmt.Sprintf("Instance Create Error: %s", err) }
+            if err := instance.Start(); err != nil { return fmt.Sprintf("Start Error: %s", err) }
+            xrayInstance = instance
+            return ""
+          }
+          func StopXray() {
+            if xrayInstance != nil { xrayInstance.Close(); xrayInstance = nil }
+          }
+          EOF
+
+      - name: Build AAR
+        run: |
+          cd xray_bridge
+          gomobile bind -target=android -o ../libxray.aar .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: libxray-aar
+          path: libxray.aar

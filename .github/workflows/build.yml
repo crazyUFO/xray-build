@@ -12,7 +12,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22' # 升级到更稳定的版本
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -38,16 +38,7 @@ jobs:
           cd xray_bridge
           go mod init xray_bridge
           
-          # 1. 拉取 xray core
-          go get github.com/xtls/xray-core@v1.8.4
-          
-          # 2. >>> 关键修复：显式拉取 mobile bind 依赖 <<<
-          go get golang.org/x/mobile/bind
-          
-          # 3. 整理依赖
-          go mod tidy
-          
-          # 创建 lib.go
+          # 1. 创建 lib.go (你的业务逻辑)
           cat <<EOF > lib.go
           package xray_bridge
           import (
@@ -71,11 +62,31 @@ jobs:
           }
           EOF
 
+          # 2. >>> 关键修复 <<< 创建一个 dummy.go
+          # 这个文件的唯一作用就是告诉 Go：“别删 mobile 库，我要用！”
+          cat <<EOF > dummy.go
+          //go:build tools
+          package xray_bridge
+          
+          import (
+              _ "golang.org/x/mobile/bind"
+              _ "github.com/xtls/xray-core/main/distro/all"
+          )
+          EOF
+
+          # 3. 下载依赖
+          # 这里先拉取 mobile，防止版本冲突
+          go get golang.org/x/mobile@latest
+          go get github.com/xtls/xray-core@v1.8.4
+          
+          # 4. 整理依赖 (因为有 dummy.go，mobile 库会被保留)
+          go mod tidy
+
       - name: Build AAR
         run: |
           cd xray_bridge
-          # 添加 -v 参数可以看到更详细的日志，方便排错
-          gomobile bind -v -target=android -androidapi 21 -o ../libxray.aar .
+          # -v 显示详细日志，-x 显示执行的命令
+          gomobile bind -v -x -target=android -androidapi 21 -o ../libxray.aar .
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
